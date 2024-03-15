@@ -7,7 +7,12 @@ from collections import OrderedDict
 import math
 import torch.nn.functional as F
 from Data_Set import compute_derivatives
+import Data_Set
+def swish(input):
+    return input * nn.Sigmoid(input)
 
+def normal(data, min_val, max_val):
+    return (data - min_val) / (max_val - min_val)
 
 class BatchLinear(nn.Linear, MetaModule):
     '''A linear meta-layer that can deal with batched weight matrices and biases, as for instance output by a
@@ -32,7 +37,15 @@ class Sine(nn.Module):
 
     def forward(self, input):
         # See paper sec. 3.2, final paragraph, and supplement Sec. 1.5 for discussion of factor 30
-        return torch.sin(30 * input)
+        return torch.sin(0.5 * input)
+
+class Silu(nn.Module):
+    def __init(self):
+        super().__init__()
+
+    def forward(self, input):
+        return input * torch.sigmoid(input)
+
 
 
 class FCBlock(MetaModule):
@@ -50,6 +63,7 @@ class FCBlock(MetaModule):
         # special first-layer initialization scheme
         nls_and_inits = {'sine':(Sine(), sine_init, first_layer_sine_init),
                          'relu':(nn.ReLU(inplace=True), init_weights_normal, None),
+                         'silu':(nn.SiLU(), init_weights_xavier, None),
                          'sigmoid':(nn.Sigmoid(), init_weights_xavier, None),
                          'tanh':(nn.Tanh(), init_weights_xavier, None),
                          'selu':(nn.SELU(inplace=True), init_weights_selu, None),
@@ -65,16 +79,16 @@ class FCBlock(MetaModule):
 
         self.net = []
         self.net.append(MetaSequential(
-            BatchLinear(in_features, hidden_features), nl
+            BatchLinear(in_features, hidden_features, bias=True), nl
         ))
 
         for i in range(num_hidden_layers):
             self.net.append(MetaSequential(
-                BatchLinear(hidden_features, hidden_features), nl
+                BatchLinear(hidden_features, hidden_features, bias=True), nl
             ))
 
         if outermost_linear:
-            self.net.append(MetaSequential(BatchLinear(hidden_features, out_features)))
+            self.net.append(MetaSequential(BatchLinear(hidden_features, out_features, bias=True)))
         else:
             self.net.append(MetaSequential(
                 BatchLinear(hidden_features, out_features), nl
@@ -174,20 +188,31 @@ class PINNet(nn.Module):
         super().__init__()
         self.mode = mode
 
-        self.net = FCBlock(in_features=in_features, out_features=out_features, num_hidden_layers=10,
-                           hidden_features=20, outermost_linear=True, nonlinearity=type,
-                           weight_init=init_weights_trunc_normal)
+        self.net = FCBlock(in_features=in_features, out_features=out_features, num_hidden_layers=2,
+                           hidden_features=64, outermost_linear=True, nonlinearity=type,
+                           weight_init=None)
+        # init_weights_trunc_normal
         print(self)
 
     def forward(self, model_input):
         # Enables us to compute gradients w.r.t. input
-        coords = model_input['coords'].requires_grad_(True)#.clone().detach().requires_grad_(True)
-        o = self.net(coords)
-        o = o.requires_grad_(True)
-        torch.autograd.set_detect_anomaly(True)
-        dudxx, dudyy, dudxxxx, dudyyyy, dudxxyy = compute_derivatives(coords, o)
-        # print('dudxx:',dudxx,'dudyy:', dudyy,'dudxxxx:', dudxxxx,'dudyyyy:', dudyyyy,'dudxxyy:', dudxxyy)
-        output = torch.cat((o, dudxx[...,None], dudyy[...,None], dudxxxx[...,None], dudyyyy[...,None], dudxxyy[...,None]), dim=-1)
+        coords = model_input['coords']#.requires_grad_(True)
+        x,y = coords[:,:,0], coords[:,:,1]
+        x = x[...,None]
+        y = y[...,None]
+        x.requires_grad_(True)
+        y.requires_grad_(True)
+
+        #print('x,y_in_mod:', x, y)
+
+        o = self.net(torch.cat((x,y),dim=-1))
+        #o = normal(o, torch.min(o), torch.max(o)) #Data_Set.min_max_normalization(o, torch.min(o), torch.max(o))
+        #o = self.net.forward_with_activations(torch.cat((x, y), dim=-1))
+
+        #print('output rete:', o)
+        dudxx, dudyy, dudxxxx, dudyyyy, dudxxyy = compute_derivatives(coords, x,y,o)
+        #output = torch.cat((o, dudxx[...,None], dudyy[...,None], dudxxxx[...,None], dudyyyy[...,None], dudxxyy[...,None]), dim=-1)
+        output = torch.cat((o, dudxx, dudyy, dudxxxx, dudxxyy, dudyyyy), dim=-1)
         return {'model_in': coords, 'model_out': output}
 
 
@@ -623,6 +648,7 @@ def init_weights_xavier(m):
     if type(m) == BatchLinear or type(m) == nn.Linear:
         if hasattr(m, 'weight'):
             nn.init.xavier_normal_(m.weight)
+            nn.init.zeros_(m.bias)
 
 
 def sine_init(m):
