@@ -8,7 +8,7 @@ import KirchoffLoss
 import modules
 import training
 import matplotlib.pyplot as plt
-
+'''ouuhdo'''
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'  # con questo il codice utilizza solo la cpu (non vede gpu)
 
 # from torchviz import make_dot
