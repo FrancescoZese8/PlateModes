@@ -20,8 +20,8 @@ class KirchhoffLoss(torch.nn.Module):
       xy = xy['gt']
       x,y = xy[:,:,0], xy[:,:,1]
       preds = preds['model_out']
-      L_f, L_b0, L_b2 = self.plate.compute_loss(x, y, preds)
-      return {'L_f': L_f, 'L_b0': L_b0, 'L_b2': L_b2}
+      L_f, L_b0, L_b2, L_t = self.plate.compute_loss(x, y, preds)
+      return {'L_f': L_f, 'L_b0': L_b0, 'L_b2': L_b2, 'L_t': L_t}
 
 class ReLoBRaLoKirchhoffLoss(KirchhoffLoss):
 
@@ -92,7 +92,7 @@ class ReLoBRaLoKirchhoffLoss(KirchhoffLoss):
             self.init_losses[i].data = (loss.data * first_iteration + var.data * (1 - first_iteration)).detach()
         self.call_count.data += 1
         # Restituisci un dizionario contenente le losses distinte
-        return {'L_f': l[0], 'L_b0': l[1], 'L_b2': l[2]}
+        return {'L_f': l[0], 'L_b0': l[1], 'L_b2': l[2], 'L_t': l[3]}
 
 
 
@@ -103,6 +103,7 @@ class KirchhoffMetric(nn.Module):
         self.L_f_mean = nn.Parameter(torch.zeros(1), requires_grad=False)
         self.L_b0_mean = nn.Parameter(torch.zeros(1), requires_grad=False)
         self.L_b2_mean = nn.Parameter(torch.zeros(1), requires_grad=False)
+        self.L_t_mean = nn.Parameter(torch.zeros(1), requires_grad=False)
         self.L_u_mean = nn.Parameter(torch.zeros(1), requires_grad=False)
 
     def update_state(self, xy, y_pred, losses = None, sample_weight=None):
@@ -110,23 +111,26 @@ class KirchhoffMetric(nn.Module):
         y_pred = y_pred['model_out']
         x, y = xy[:, :, 0], xy[:, :, 1]
 
-        L_f, L_b0, L_b2, L_u = self.plate.compute_loss(x, y, y_pred, eval=True)
+        L_f, L_b0, L_b2, L_u, L_t = self.plate.compute_loss(x, y, y_pred, eval=True)
         self.L_f_mean.data = torch.mean(L_f)
         self.L_b0_mean.data = torch.mean(L_b0)
         self.L_b2_mean.data = torch.mean(L_b2)
         self.L_u_mean.data = torch.mean(L_u)
+        self.L_t_mean.data = torch.mean(L_t)
 
     def reset_state(self):
         self.L_f_mean.data = torch.zeros(1)
         self.L_b0_mean.data = torch.zeros(1)
         self.L_b2_mean.data = torch.zeros(1)
         self.L_u_mean.data = torch.zeros(1)
+        self.L_t_mean.data = torch.zeros(1)
 
     def result(self):
         return {'L_f': self.L_f_mean.item(), #.mean().item(),
                 'L_b0': self.L_b0_mean.item(),
                 'L_b2': self.L_b2_mean.item(),
-                'L_u': self.L_u_mean.item()}
+                'L_u': self.L_u_mean.item(),
+                'L_t': self.L_t_mean.item()}
 
 class ReLoBRaLoLambdaMetric(nn.Module):
         def __init__(self, loss, name='relobralo_lambda_metric'):
@@ -135,19 +139,23 @@ class ReLoBRaLoLambdaMetric(nn.Module):
             self.L_f_lambda_mean = CustomVariable(0.0, trainable=False)
             self.L_b0_lambda_mean = CustomVariable(0.0, trainable=False)
             self.L_b2_lambda_mean = CustomVariable(0.0, trainable=False)
+            self.L_t_lambda_mean = CustomVariable(0.0, trainable=False)
 
         def update_state(self, xy, y_pred, sample_weight=None):
-            L_f_lambda, L_b0_lambda, L_b2_lambda = self.loss.lambdas
+            L_f_lambda, L_b0_lambda, L_b2_lambda, L_t_lambda = self.loss.lambdas
             self.L_f_lambda_mean.assign(L_f_lambda.data.data.item())
             self.L_b0_lambda_mean.assign(L_b0_lambda.data.data.item())
             self.L_b2_lambda_mean.assign(L_b2_lambda.data.item())
+            self.L_t_lambda_mean.assign(L_t_lambda.data.item())
 
         def reset_state(self):
             self.L_f_lambda_mean.assign(0.0)
             self.L_b0_lambda_mean.assign(0.0)
             self.L_b2_lambda_mean.assign(0.0)
+            self.L_t_lambda_mean.assign(0.0)
 
         def result(self):
             return {'L_f': self.L_f_lambda_mean.data.data,
                     'L_b0': self.L_b0_lambda_mean.data.data,
-                    'L_b2': self.L_b2_lambda_mean.data.data}
+                    'L_b2': self.L_b2_lambda_mean.data.data,
+                    'L_t': self.L_t_lambda_mean.data.data}

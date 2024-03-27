@@ -10,7 +10,7 @@ import scipy.ndimage
 import scipy.special
 import skimage
 import skimage.filters
-import skvideo.io
+#import skvideo.io
 import torch
 from PIL import Image
 from torch.utils.data import Dataset
