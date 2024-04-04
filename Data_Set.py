@@ -7,11 +7,10 @@ from diff_operators import gradient
 import torch.nn.functional as F
 from torch.autograd import detect_anomaly
 
-EPS = 1e-7
-EPS2 = 1e-6
+EPS = 1e-6
 
 
-def compute_derivatives(coords, x, y, u):
+def compute_derivatives(x, y, u):
     dudx = gradient(u, x)
     dudy = gradient(u, y)
 
@@ -46,7 +45,8 @@ def inv(data):
 
 class KirchhoffDataset(Dataset):
 
-    def __init__(self, p, u_val, T, nue, E, H, W, total_length, den: float, omega: float):
+    def __init__(self, p, u_val, T, nue, E, H, W, total_length, den: float, omega: float,batch_size_domain,
+                 batch_size_boundary, known_points_x, known_points_y, nkp):
         self.p = p
         self.u_val = u_val
         self.T = T
@@ -59,6 +59,11 @@ class KirchhoffDataset(Dataset):
         self.total_length = total_length
         self.den = den
         self.omega = omega
+        self.batch_size_domain = batch_size_domain
+        self.batch_size_boundary = batch_size_boundary
+        self.known_points_x = known_points_x
+        self.known_points_y = known_points_y
+        self.nkp = nkp
 
     def __getitem__(self, item):
         x, y = self.training_batch()
@@ -70,24 +75,24 @@ class KirchhoffDataset(Dataset):
     def __len__(self):
         return self.total_length
 
-    def training_batch(self, batch_size_domain: int = 800, batch_size_boundary: int = 100) -> Tuple[
+    def training_batch(self) -> Tuple[
         torch.Tensor, torch.Tensor]:
 
-        x_t = torch.rand((800, 1)) * 10
-        x_in = torch.rand((batch_size_domain, 1)) * self.W
-        x_b1 = torch.zeros((batch_size_boundary, 1))
-        x_b2 = torch.zeros((batch_size_boundary, 1)) + self.W
-        x_b3 = torch.rand((batch_size_boundary, 1)) * self.W
-        x_b4 = torch.rand((batch_size_boundary, 1)) * self.W
+        x_t = self.known_points_x
+        x_in = torch.rand((self.batch_size_domain, 1)) * self.W
+        x_b1 = torch.zeros((self.batch_size_boundary, 1))
+        x_b2 = torch.zeros((self.batch_size_boundary, 1)) + self.W
+        x_b3 = torch.rand((self.batch_size_boundary, 1)) * self.W
+        x_b4 = torch.rand((self.batch_size_boundary, 1)) * self.W
 
         x = torch.cat([x_t, x_in, x_b1, x_b2, x_b3, x_b4], dim=0)  # .to(self.device)
 
-        y_t = torch.rand((800, 1)) * 10
-        y_in = torch.rand((batch_size_domain, 1)) * self.H
-        y_b1 = torch.rand((batch_size_boundary, 1)) * self.H
-        y_b2 = torch.rand((batch_size_boundary, 1)) * self.H
-        y_b3 = torch.zeros((batch_size_boundary, 1))
-        y_b4 = torch.zeros((batch_size_boundary, 1)) + self.H
+        y_t = self.known_points_y
+        y_in = torch.rand((self.batch_size_domain, 1)) * self.H
+        y_b1 = torch.rand((self.batch_size_boundary, 1)) * self.H
+        y_b2 = torch.rand((self.batch_size_boundary, 1)) * self.H
+        y_b3 = torch.zeros((self.batch_size_boundary, 1))
+        y_b4 = torch.zeros((self.batch_size_boundary, 1)) + self.H
         y = torch.cat([y_t, y_in, y_b1, y_b2, y_b3, y_b4], dim=0)  # .to(self.device)
 
         return x, y
@@ -110,15 +115,29 @@ class KirchhoffDataset(Dataset):
         preds = np.squeeze(preds, axis=0)
         x = np.squeeze(x, axis=0)
         y = np.squeeze(y, axis=0)
-        x_t = x[:800] #TODO
-        y_t = y[:800]
-        preds_t = np.squeeze(preds[:800, 0:1])
-        u = self.u_val(x_t, y_t) - preds_t
-        f = preds[:, 3:4] + 2 * preds[:, 5:6] + preds[:, 4:5] - (
-                    self.den * self.T * (self.omega ** 2)) / self.D * preds[:, 0:1]
-        f = f[:, 0]
+        #x = x[self.nkp:]
+        #y = y[self.nkp:]
+        x_t = x[:self.nkp]
+        y_t = y[:self.nkp]
+        u_t = np.squeeze(preds[:self.nkp, 0:1])
+        #u = np.squeeze(preds[self.nkp:, 0:1])
+        u = np.squeeze(preds[:, 0:1])
+        #dudxx = np.squeeze(preds[self.nkp:, 1:2])
+        #dudyy = np.squeeze(preds[self.nkp:, 2:3])
+        #dudxxxx = np.squeeze(preds[self.nkp:, 3:4])
+        #dudyyyy = np.squeeze(preds[self.nkp:, 4:5])
+        #dudxxyy = np.squeeze(preds[self.nkp:, 5:6])
+        dudxx = np.squeeze(preds[:, 1:2])
+        dudyy = np.squeeze(preds[:, 2:3])
+        dudxxxx = np.squeeze(preds[:, 3:4])
+        dudyyyy = np.squeeze(preds[:, 4:5])
+        dudxxyy = np.squeeze(preds[:, 5:6])
+        err_t = self.u_val(x_t, y_t) - u_t
+        f = dudxxxx + 2 * dudxxyy + dudyyyy - (
+                    self.den * self.T * (self.omega ** 2)) / self.D * u
+
         L_f = f ** 2
-        L_t = u ** 2
+        L_t = err_t ** 2
 
         # determine which points are on the boundaries of the domain
         # if a point is on either of the boundaries, its value is 1 and 0 otherwise
@@ -127,17 +146,14 @@ class KirchhoffDataset(Dataset):
         y_lower = torch.where(y <= EPS, torch.tensor(1.0), torch.tensor(0.0))
         y_upper = torch.where(y >= self.H - EPS, torch.tensor(1.0), torch.tensor(0.0))
 
-        w = preds[:, :1]
-        L_b0 = torch.mul((x_lower + x_upper + y_lower + y_upper), w[:, 0]) ** 2
+        L_b0 = torch.mul((x_lower + x_upper + y_lower + y_upper), u) ** 2
 
         # compute 2nd order boundary condition loss
-        mx, my = compute_moments(self.D, self.nue, preds[:, 1:2], preds[:, 2:3])
-        mx, my = mx[:, 0], my[:, 0]
+        mx, my = compute_moments(self.D, self.nue, dudxx, dudyy)
         L_b2 = torch.mul((x_lower + x_upper), mx) ** 2 + torch.mul((y_lower + y_upper), my) ** 2
 
         if eval:
-            u_pred = preds[:, 0:1]
-            L_u = (self.u_val(x, y) - u_pred[:, 0]) ** 2
+            L_u = (self.u_val(x, y) - u) ** 2
 
             return L_f, L_b0, L_b2, L_u, L_t
         return L_f, L_b0, L_b2, L_t
@@ -192,6 +208,8 @@ class KirchhoffDataset(Dataset):
             fig, axs = plt.subplots(1, 2, figsize=(8, 3.2))
             self.__show_image(u_pred, axs[0], 'Predicted Displacement (m)')
             self.__show_image((u_pred - u_real) ** 2, axs[1], 'Squared Error Displacement')
+            NMSE = (np.linalg.norm(u_pred - u_real) ** 2) / (np.linalg.norm(u_pred) ** 2)
+            print('NMSE: ', NMSE)
             # self.__show_image(mx, axs[1, 0], 'Moments mx')
             # self.__show_image(my, axs[1, 1], 'Moments my')
             # self.__show_image(f, axs[2, 0], 'Governing Equation')

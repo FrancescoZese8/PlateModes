@@ -8,11 +8,16 @@ import KirchoffLoss
 import modules
 import training
 import matplotlib.pyplot as plt
-'''ouuhdo'''
-os.environ['CUDA_VISIBLE_DEVICES'] = '-1'  # con questo il codice utilizza solo la cpu (non vede gpu)
+
+#os.environ['CUDA_VISIBLE_DEVICES'] = '-1'  # con questo il codice utilizza solo la cpu (non vede gpu)
+#torch.set_default_tensor_type('torch.cuda.FloatTensor')
 
 # from torchviz import make_dot
 import pdb
+# 1%/2-2:
+#NMSE: 0.09404823830498811   loss: 0.00000090915
+#NMSE: 0.09810258528924976   loss: 0.00000099067
+
 
 # from IPython.display import Image
 '''sys.path.insert(1, '/Users/user/PycharmProjects/ReLoBraLoSirenP/siren')'''
@@ -21,9 +26,9 @@ logging_root = './logs'
 experiment_name = 'exp_helm_test'
 
 # General training options
-batch_size = 64
+batch_size = 32
 lr = 0.001
-num_epochs = 500
+num_epochs = 400
 epochs_til_ckpt = 50
 steps_til_summary = 10
 opt_model = 'silu'
@@ -33,15 +38,24 @@ use_lbfgs = False
 checkpoint_path = None
 val = 'y'
 relo = True
-W = 10  # * 10e3
-H = 10  # * 10e3
-T = 0.2  # * 10e3
-E = 30000  # * 10e-6
+W = 10
+H = 10
+T = 0.2
+E = 30000
 nue = 0.2
-p0 = 0.15  # * 10e-6
+p0 = 0.15
 den = 1000
 n = 2
 m = 2
+batch_size_domain = 800
+batch_size_boundary = 100
+percentage_of_known_points = 1  # %
+
+nkp = percentage_of_known_points * batch_size_domain // 100
+known_points_x = torch.rand((nkp, 1)) * W
+known_points_y = torch.rand((nkp, 1)) * H
+print('kpx: ', known_points_x)
+print('kpy: ', known_points_y)
 
 D = (E * T ** 3) / (12 * (1 - nue ** 2))  # flexural stiffnes of the plate
 omega = ((n * np.pi / W) ** 2 + (m * np.pi / H) ** 2) * np.sqrt(D / (den * T))
@@ -51,7 +65,7 @@ N = 10
 nb = 5
 
 total_length = 1
-n_step = 25
+n_step = 50
 
 max_epochs_without_improvement = 100
 current_epochs_without_improvement = 0
@@ -69,7 +83,8 @@ def u_val(x, y):
 
 
 plate = Data_Set.KirchhoffDataset(p=load, u_val=u_val, T=T, nue=nue, E=E, W=W, H=H, total_length=total_length, den=den,
-                                  omega=omega)
+                                  omega=omega,batch_size_domain=batch_size_domain, batch_size_boundary=
+                                  batch_size_boundary, known_points_x=known_points_x, known_points_y=known_points_y, nkp=nkp)
 # plate.visualise()
 data_loader = DataLoader(plate, shuffle=True, batch_size=batch_size, pin_memory=True, num_workers=0)
 model = modules.PINNet(out_features=1, type=opt_model, mode=mode)
@@ -135,7 +150,6 @@ if metric_lam is not None:
     plt.plot(history_lambda['L_b0_lambda'], label='$\lambda_{b0}$ Dirichlet boundaries')
     plt.plot(history_lambda['L_b2_lambda'], label='$\lambda_{b2}$ Moment boundaries')
     plt.plot(history_lambda['L_t_lambda'], label='$\lambda_{t}$ Known points')
-    print(history_lambda['L_t_lambda'])
     plt.legend()
     plt.xlabel('Epochs')
     plt.ylabel('scalings lambda')  # $\lambda$')

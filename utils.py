@@ -9,7 +9,7 @@ import skimage.measure
 import cv2
 import meta_modules
 import scipy.io.wavfile as wavfile
-import cmapy
+#import cmapy
 
 
 def cond_mkdir(path):

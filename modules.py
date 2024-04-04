@@ -210,9 +210,9 @@ class PINNet(nn.Module):
         #o = self.net.forward_with_activations(torch.cat((x, y), dim=-1))
 
         #print('output rete:', o)
-        dudxx, dudyy, dudxxxx, dudyyyy, dudxxyy = compute_derivatives(coords, x,y,o)
+        dudxx, dudyy, dudxxxx, dudyyyy, dudxxyy = compute_derivatives(x,y,o)
         #output = torch.cat((o, dudxx[...,None], dudyy[...,None], dudxxxx[...,None], dudyyyy[...,None], dudxxyy[...,None]), dim=-1)
-        output = torch.cat((o, dudxx, dudyy, dudxxxx, dudxxyy, dudyyyy), dim=-1)
+        output = torch.cat((o, dudxx, dudyy, dudxxxx, dudyyyy, dudxxyy), dim=-1)
         return {'model_in': coords, 'model_out': output}
 
 
